@@ -1,0 +1,17 @@
+# Binarios y ejecutables
+matcalc
+
+# Archivos generados por Flex
+matcalc.lex.c
+
+# Archivos generados por Bison
+matcalc.tab.c
+matcalc.tab.h
+matcalc.output
+
+# Archivos de objeto
+*.o
+
+# Archivos temporales de editores
+*~
+*.swp

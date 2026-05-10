@@ -1,0 +1,10 @@
+A = [1, 2; 3, 4];
+B = [1, 0; 0, 1];
+A + B;
+C = A * B;
+C;
+D = INV(A);
+A * D;
+TRANS(A) + TRANS(B);
+E = 2 * A;
+E;
