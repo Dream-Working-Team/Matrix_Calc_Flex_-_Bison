@@ -54,6 +54,38 @@ void symbol_set(const char* name, Matrix* m);
 Matrix* symbol_get(const char* name);
 void symbol_free_all();
 
+/* --- INICIO DE MODIFICACIONES PARA MODO DEBUG --- */
+
+/* Flag global para activar/desactivar el modo depuración desde la CLI */
+int modo_debug = 0;
+
+/* Contador para controlar el nivel de indentación en el árbol jerárquico */
+int profundidad = 0;
+
+/**
+ * Función auxiliar para imprimir el árbol de sintaxis de forma jerárquica.
+ * Solo imprime si modo_debug está activo.
+ * @param texto_token: El contenido o nombre de la regla/token detectado.
+ * @param tipo_token: Etiqueta descriptiva (ID, NUM, REGLA, etc.)
+ */
+void imprimir_debug(const char* texto_token, const char* tipo_token) {
+    if (!modo_debug) return;
+
+    // Generar sangría proporcional a la profundidad actual
+    for (int i = 0; i < profundidad; i++) {
+        printf("  ");
+    }
+
+    // Formato: |-- Contenido (Tipo)
+    if (tipo_token != NULL && strlen(tipo_token) > 0) {
+        printf("|-- %s (%s)\n", texto_token, tipo_token);
+    } else {
+        printf("|-- %s\n", texto_token);
+    }
+}
+
+/* --- FIN DE DECLARACIONES DEBUG --- */
+
 /* Definición de la estructura Matrix */
 struct Matrix {
     int filas;
@@ -97,27 +129,49 @@ struct Matrix {
 
 programa:
     /* empty */
-    | programa sentencia PUNTO_COMA
+    | programa sentencia PUNTO_COMA {
+        imprimir_debug(";", "PUNTO_COMA");
+    }
     | programa error PUNTO_COMA
     ;
 
 sentencia:
     expr {
+        // Al entrar en una sentencia que es solo una expresión
+        imprimir_debug("INSTRUCCION", "REGLA");
+        profundidad++;
+        
         printf("=== Resultado ===\n");
         matrix_print($1);
         matrix_free($1);
+        
+        profundidad--;
     }
     | IDENTIFICADOR ASIGNACION expr {
+        // Registro jerárquico de la asignación
+        imprimir_debug("ASIGNACION", "REGLA");
+        profundidad++;
+        
+        imprimir_debug($1, "ID");
+        imprimir_debug("=", "ASIGNACION");
+        
         symbol_set($1, $3);
         printf("=== Variable '%s' asignada ===\n", $1);
         matrix_print($3);
         free($1);
         matrix_free($3);
+        
+        profundidad--;
     }
     ;
 
 expr:
     NUMERO {
+        // Convertir el número a texto para la traza
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.2f", $1);
+        imprimir_debug(buf, "NUMERO");
+        
         $$ = matrix_create(1, 1);
         if ($$ != NULL) {
             $$->datos[0][0] = $1;
@@ -128,6 +182,7 @@ expr:
     }
     
     | IDENTIFICADOR {
+        imprimir_debug($1, "ID");
         $$ = symbol_get($1);
         free($1);
     }
@@ -141,6 +196,9 @@ expr:
     }
     
     | expr MAS expr {
+        imprimir_debug("+", "OPERADOR_MAS");
+        profundidad++;
+        
         if ($1 == NULL || $3 == NULL) {
             $$ = NULL;
             matrix_free($1);
@@ -154,9 +212,14 @@ expr:
             matrix_free($1);
             matrix_free($3);
         }
+        
+        profundidad--;
     }
     
     | expr MENOS expr {
+        imprimir_debug("-", "OPERADOR_MENOS");
+        profundidad++;
+        
         if ($1 == NULL || $3 == NULL) {
             $$ = NULL;
             matrix_free($1);
@@ -170,9 +233,14 @@ expr:
             matrix_free($1);
             matrix_free($3);
         }
+        
+        profundidad--;
     }
     
     | expr ASTERISCO expr {
+        imprimir_debug("*", "OPERADOR_POR");
+        profundidad++;
+        
         if ($1 == NULL || $3 == NULL) {
             $$ = NULL;
             matrix_free($1);
@@ -186,9 +254,15 @@ expr:
             matrix_free($1);
             matrix_free($3);
         }
+        
+        profundidad--;
     }
     
     | DET_FUNC PARENT_IZQ expr PARENT_DER %prec FUNCIONES {
+        imprimir_debug("DET", "FUNCION");
+        profundidad++;
+        imprimir_debug("(", "PARENT_IZQ");
+        
         if ($3 == NULL) {
             $$ = NULL;
         } else if (!matrix_validate_square($3)) {
@@ -202,9 +276,16 @@ expr:
             }
             matrix_free($3);
         }
+        
+        imprimir_debug(")", "PARENT_DER");
+        profundidad--;
     }
     
     | INV_FUNC PARENT_IZQ expr PARENT_DER %prec FUNCIONES {
+        imprimir_debug("INV", "FUNCION");
+        profundidad++;
+        imprimir_debug("(", "PARENT_IZQ");
+        
         if ($3 == NULL) {
             $$ = NULL;
         } else if (!matrix_validate_square($3)) {
@@ -214,26 +295,42 @@ expr:
             $$ = matrix_inv($3);
             matrix_free($3);
         }
+        
+        imprimir_debug(")", "PARENT_DER");
+        profundidad--;
     }
     
     | TRANS_FUNC PARENT_IZQ expr PARENT_DER %prec FUNCIONES {
+        imprimir_debug("TRANS", "FUNCION");
+        profundidad++;
+        imprimir_debug("(", "PARENT_IZQ");
+        
         if ($3 == NULL) {
             $$ = NULL;
         } else {
             $$ = matrix_trans($3);
             matrix_free($3);
         }
+        
+        imprimir_debug(")", "PARENT_DER");
+        profundidad--;
     }
     
     | PARENT_IZQ expr PARENT_DER {
+        imprimir_debug("(", "PARENT_IZQ");
         $$ = $2;
+        imprimir_debug(")", "PARENT_DER");
     }
     ;
 
 /* Notación plana: [elem, elem; elem, elem] */
 matriz_plana:
     CORCHETE_IZQ lista_filas CORCHETE_DER {
+        imprimir_debug("[", "CORCHETE_IZQ");
+        profundidad++;
         $$ = $2;
+        profundidad--;
+        imprimir_debug("]", "CORCHETE_DER");
     }
     ;
 
@@ -242,6 +339,7 @@ lista_filas:
         $$ = $1;
     }
     | lista_filas PUNTO_COMA fila {
+        imprimir_debug(";", "PUNTO_COMA_FILA");
         if ($1 == NULL || $3 == NULL) {
             $$ = NULL;
             matrix_free($1);
@@ -271,18 +369,30 @@ lista_filas:
 
 fila:
     lista_elementos {
+        imprimir_debug("FILA", "REGLA");
+        profundidad++;
         $$ = $1;
+        profundidad--;
     }
     ;
 
 lista_elementos:
     NUMERO {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.2f", $1);
+        imprimir_debug(buf, "NUMERO");
+        
         $$ = matrix_create(1, 1);
         if ($$ != NULL) {
             $$->datos[0][0] = $1;
         }
     }
     | lista_elementos COMA NUMERO {
+        imprimir_debug(",", "COMA");
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.2f", $3);
+        imprimir_debug(buf, "NUMERO");
+        
         if ($1 == NULL) {
             $$ = NULL;
         } else {
@@ -306,7 +416,11 @@ lista_elementos:
  * Cada fila debe estar entre corchetes para distinguir de notación plana */
 matriz_anidada:
     CORCHETE_IZQ lista_expresiones CORCHETE_DER {
+        imprimir_debug("[", "CORCHETE_IZQ_MATRIZ");
+        profundidad++;
         $$ = $2;
+        profundidad--;
+        imprimir_debug("]", "CORCHETE_DER_MATRIZ");
     }
     ;
 
@@ -315,6 +429,7 @@ lista_expresiones:
         $$ = $1;
     }
     | lista_expresiones COMA fila_anidada {
+        imprimir_debug(",", "COMA_FILA");
         if ($1 == NULL || $3 == NULL) {
             $$ = NULL;
             matrix_free($1);
@@ -352,7 +467,11 @@ lista_expresiones:
 /* Fila en notación anidada: [elem, elem] -必须有 corchetes */
 fila_anidada:
     CORCHETE_IZQ lista_elementos CORCHETE_DER {
+        imprimir_debug("[", "CORCHETE_IZQ_FILA");
+        profundidad++;
         $$ = $2;
+        profundidad--;
+        imprimir_debug("]", "CORCHETE_DER_FILA");
     }
     ;
 
@@ -402,6 +521,7 @@ Matrix* matrix_create(int filas, int columnas) {
     return m;
 }
 
+
 void matrix_free(Matrix* m) {
     if (m == NULL) return;
     
@@ -417,6 +537,7 @@ void matrix_free(Matrix* m) {
     free(m);
 }
 
+
 Matrix* matrix_copy(Matrix* m) {
     if (m == NULL) return NULL;
     Matrix* copy = matrix_create(m->filas, m->columnas);
@@ -428,6 +549,7 @@ Matrix* matrix_copy(Matrix* m) {
     }
     return copy;
 }
+
 
 void matrix_print(Matrix* m) {
     if (m == NULL) {
@@ -445,6 +567,7 @@ void matrix_print(Matrix* m) {
     }
 }
 
+
 int matrix_validate_add_sub(Matrix* a, Matrix* b) {
     if (a->filas != b->filas || a->columnas != b->columnas) {
         fprintf(stderr, "Error semántico en línea %d: Dimensiones incompatibles para "
@@ -454,6 +577,7 @@ int matrix_validate_add_sub(Matrix* a, Matrix* b) {
     }
     return 1;
 }
+
 
 int matrix_validate_mul(Matrix* a, Matrix* b) {
     /* Si uno es escalar (1x1), la multiplicación siempre es válida */
@@ -470,6 +594,7 @@ int matrix_validate_mul(Matrix* a, Matrix* b) {
     return 1;
 }
 
+
 int matrix_validate_square(Matrix* m) {
     if (m->filas != m->columnas) {
         fprintf(stderr, "Error semántico en línea %d: La matriz %dx%d no es cuadrada "
@@ -478,6 +603,7 @@ int matrix_validate_square(Matrix* m) {
     }
     return 1;
 }
+
 
 Matrix* matrix_add(Matrix* a, Matrix* b) {
     Matrix* resultado = matrix_create(a->filas, a->columnas);
@@ -492,6 +618,7 @@ Matrix* matrix_add(Matrix* a, Matrix* b) {
     return resultado;
 }
 
+
 Matrix* matrix_sub(Matrix* a, Matrix* b) {
     Matrix* resultado = matrix_create(a->filas, a->columnas);
     if (resultado == NULL) return NULL;
@@ -504,6 +631,7 @@ Matrix* matrix_sub(Matrix* a, Matrix* b) {
     
     return resultado;
 }
+
 
 Matrix* matrix_mul(Matrix* a, Matrix* b) {
     /* Caso A es escalar */
@@ -549,6 +677,7 @@ Matrix* matrix_mul(Matrix* a, Matrix* b) {
     return resultado;
 }
 
+
 double matrix_det(Matrix* m) {
     if (m->filas != m->columnas) {
         return 0.0;
@@ -591,6 +720,7 @@ double matrix_det(Matrix* m) {
     
     return determinante;
 }
+
 
 Matrix* matrix_inv(Matrix* m) {
     int n = m->filas;
@@ -666,6 +796,7 @@ Matrix* matrix_inv(Matrix* m) {
     return resultado;
 }
 
+
 Matrix* matrix_trans(Matrix* m) {
     Matrix* resultado = matrix_create(m->columnas, m->filas);
     if (resultado == NULL) return NULL;
@@ -678,6 +809,7 @@ Matrix* matrix_trans(Matrix* m) {
     
     return resultado;
 }
+
 
 /* Implementación de la tabla de símbolos */
 void symbol_set(const char* name, Matrix* m) {
@@ -698,6 +830,7 @@ void symbol_set(const char* name, Matrix* m) {
     symbol_table = s;
 }
 
+
 Matrix* symbol_get(const char* name) {
     Symbol* s = symbol_table;
     while (s != NULL) {
@@ -711,6 +844,7 @@ Matrix* symbol_get(const char* name) {
     return NULL;
 }
 
+
 void symbol_free_all() {
     Symbol* s = symbol_table;
     while (s != NULL) {
@@ -723,17 +857,31 @@ void symbol_free_all() {
     symbol_table = NULL;
 }
 
+
 void yyerror(const char* mensaje) {
     fprintf(stderr, "Error sintáctico en línea %d: %s\n", yylineno, mensaje);
 }
 
 int main(int argc, char** argv) {
-    (void)argc;
-    (void)argv;
+    // Procesar argumentos para activar el modo debug
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
+            modo_debug = 1;
+        }
+    }
+
     printf("==============================================\n");
     printf("  CALCULADORA DE MATRICES - Versión 1.2\n");
+    if (modo_debug) {
+        printf("  MODO DEPURACIÓN ACTIVADO: Traza del Árbol\n");
+    }
     printf("==============================================\n");
-    printf("Ingrese expresiones matriciales (Ctrl+D para salir):\n\n");
+    
+    if (!modo_debug) {
+        printf("Ingrese expresiones matriciales (Ctrl+D para salir):\n\n");
+    } else {
+        printf("Iniciando análisis jerárquico de la entrada...\n\n");
+    }
     
     int resultado = yyparse();
     
