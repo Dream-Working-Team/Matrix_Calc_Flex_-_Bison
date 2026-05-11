@@ -141,7 +141,7 @@ sentencia:
         imprimir_debug("INSTRUCCION", "REGLA");
         profundidad++;
         
-        printf("=== Resultado ===\n");
+        printf("=== Resultado para la expresión ===\n");
         matrix_print($1);
         matrix_free($1);
         
@@ -156,7 +156,7 @@ sentencia:
         imprimir_debug("=", "ASIGNACION");
         
         symbol_set($1, $3);
-        printf("=== Variable '%s' asignada ===\n", $1);
+        printf("=== Resultado para asignación: %s ===\n", $1);
         matrix_print($3);
         free($1);
         matrix_free($3);
@@ -208,6 +208,7 @@ expr:
             matrix_free($1);
             matrix_free($3);
         } else {
+            printf("--- Operación: SUMA ---\n");
             $$ = matrix_add($1, $3);
             matrix_free($1);
             matrix_free($3);
@@ -229,6 +230,7 @@ expr:
             matrix_free($1);
             matrix_free($3);
         } else {
+            printf("--- Operación: RESTA ---\n");
             $$ = matrix_sub($1, $3);
             matrix_free($1);
             matrix_free($3);
@@ -250,6 +252,7 @@ expr:
             matrix_free($1);
             matrix_free($3);
         } else {
+            printf("--- Operación: MULTIPLICACIÓN ---\n");
             $$ = matrix_mul($1, $3);
             matrix_free($1);
             matrix_free($3);
@@ -269,6 +272,7 @@ expr:
             $$ = NULL;
             matrix_free($3);
         } else {
+            printf("--- Función: DETERMINANTE ---\n");
             double det = matrix_det($3);
             $$ = matrix_create(1, 1);
             if ($$ != NULL) {
@@ -292,6 +296,7 @@ expr:
             $$ = NULL;
             matrix_free($3);
         } else {
+            printf("--- Función: INVERSA ---\n");
             $$ = matrix_inv($3);
             matrix_free($3);
         }
@@ -308,6 +313,7 @@ expr:
         if ($3 == NULL) {
             $$ = NULL;
         } else {
+            printf("--- Función: TRANSPUESTA ---\n");
             $$ = matrix_trans($3);
             matrix_free($3);
         }
