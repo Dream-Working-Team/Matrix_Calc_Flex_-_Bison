@@ -54,10 +54,28 @@ void symbol_set(const char* name, Matrix* m);
 Matrix* symbol_get(const char* name);
 void symbol_free_all();
 
-/* --- INICIO DE MODIFICACIONES PARA MODO DEBUG --- */
+/* --- INICIO DE VARIABLES GLOBALES DE ESTADO --- */
 
-/* Flag global para activar/desactivar el modo depuración desde la CLI */
+/* Flag para activar/desactivar el modo depuración desde la CLI */
 int modo_debug = 0;
+
+int ultima_linea_error = -1;
+
+/*
+ * error_en_sentencia: Flag de alcance POR SENTENCIA.
+ *   Se activa (=1) cuando ocurre un error léxico, sintáctico o semántico
+ *   durante el procesamiento de la sentencia actual.
+ *   Bloquea la evaluación e impresión de resultados para esa sentencia.
+ *   Se reinicia a 0 al finalizar cada inst_completa (tras el PUNTO_COMA).
+ */
+int error_en_sentencia = 0;
+
+/*
+ * total_errores: Contador GLOBAL acumulativo.
+ *   Cada error (léxico, sintáctico, semántico) lo incrementa.
+ *   Al final del main, determina si el mensaje es de éxito o de error.
+ */
+int total_errores = 0;
 
 /* Contador para controlar el nivel de indentación en el árbol jerárquico */
 int profundidad = 0;
@@ -65,18 +83,12 @@ int profundidad = 0;
 /**
  * Función auxiliar para imprimir el árbol de sintaxis de forma jerárquica.
  * Solo imprime si modo_debug está activo.
- * @param texto_token: El contenido o nombre de la regla/token detectado.
- * @param tipo_token: Etiqueta descriptiva (ID, NUM, REGLA, etc.)
  */
 void imprimir_debug(const char* texto_token, const char* tipo_token) {
     if (!modo_debug) return;
-
-    // Generar sangría proporcional a la profundidad actual
     for (int i = 0; i < profundidad; i++) {
         printf("  ");
     }
-
-    // Formato: |-- Contenido (Tipo)
     if (tipo_token != NULL && strlen(tipo_token) > 0) {
         printf("|-- %s (%s)\n", texto_token, tipo_token);
     } else {
@@ -84,7 +96,7 @@ void imprimir_debug(const char* texto_token, const char* tipo_token) {
     }
 }
 
-/* --- FIN DE DECLARACIONES DEBUG --- */
+/* --- FIN DE DECLARACIONES GLOBALES --- */
 
 /* Definición de la estructura Matrix */
 struct Matrix {
@@ -129,61 +141,86 @@ struct Matrix {
 
 programa:
     /* empty */
-    | programa sentencia PUNTO_COMA {
-        imprimir_debug(";", "PUNTO_COMA");
-    }
-    | programa error PUNTO_COMA
+    | programa inst_completa
     ;
 
-sentencia:
-    expr {
-        // Al entrar en una sentencia que es solo una expresión
-        imprimir_debug("INSTRUCCION", "REGLA");
-        profundidad++;
-        
-        printf("=== Resultado para la expresión ===\n");
-        matrix_print($1);
+/*
+ * inst_completa: punto de sincronización del parser.
+ *   Cada sentencia termina con PUNTO_COMA. Al finalizar (sea exitosa o con error),
+ *   se reinicia error_en_sentencia = 0 para procesar la siguiente línea limpiamente.
+ *   SOLO evalúa e imprime si error_en_sentencia == 0 y la matriz no es NULL.
+ */
+inst_completa:
+    expr PUNTO_COMA {
+        if (!error_en_sentencia && $1 != NULL) {
+            imprimir_debug("INSTRUCCION", "REGLA");
+            profundidad++;
+            printf("=== Resultado para la expresión ===\n");
+            matrix_print($1);
+            profundidad--;
+        }
         matrix_free($1);
-        
-        profundidad--;
+        imprimir_debug(";", "PUNTO_COMA");
+        /* Reiniciar flag de error para la siguiente sentencia */
+        error_en_sentencia = 0;
     }
-    | IDENTIFICADOR ASIGNACION expr {
-        // Registro jerárquico de la asignación
-        imprimir_debug("ASIGNACION", "REGLA");
-        profundidad++;
-        
-        imprimir_debug($1, "ID");
-        imprimir_debug("=", "ASIGNACION");
-        
-        symbol_set($1, $3);
-        printf("=== Resultado para asignación: %s ===\n", $1);
-        matrix_print($3);
+    | IDENTIFICADOR ASIGNACION expr PUNTO_COMA {
+        if (!error_en_sentencia && $3 != NULL) {
+            imprimir_debug("ASIGNACION", "REGLA");
+            profundidad++;
+            imprimir_debug($1, "ID");
+            imprimir_debug("=", "ASIGNACION");
+            symbol_set($1, $3);
+            printf("=== Resultado para asignación: %s ===\n", $1);
+            matrix_print($3);
+            profundidad--;
+        }
         free($1);
         matrix_free($3);
-        
-        profundidad--;
+        imprimir_debug(";", "PUNTO_COMA");
+        /* Reiniciar flag de error para la siguiente sentencia */
+        error_en_sentencia = 0;
+    }
+    | error PUNTO_COMA {
+        /*
+         * Recuperación en modo pánico: Bison descarta tokens hasta encontrar
+         * el PUNTO_COMA de sincronización. yyerrok limpia el estado interno
+         * de error de Bison para que no siga reportando "syntax error".
+         * Reiniciamos error_en_sentencia para procesar la siguiente línea.
+         */
+        yyerrok;
+        error_en_sentencia = 0;
+        imprimir_debug("ERROR", "RECUPERACION_PUNTO_COMA");
     }
     ;
 
 expr:
     NUMERO {
-        // Convertir el número a texto para la traza
         char buf[64];
         snprintf(buf, sizeof(buf), "%.2f", $1);
         imprimir_debug(buf, "NUMERO");
         
-        $$ = matrix_create(1, 1);
-        if ($$ != NULL) {
-            $$->datos[0][0] = $1;
-        } else {
-            yyerror("Falló la creación de matriz escalar");
+        if (error_en_sentencia) {
             $$ = NULL;
+        } else {
+            $$ = matrix_create(1, 1);
+            if ($$ != NULL) {
+                $$->datos[0][0] = $1;
+            } else {
+                error_en_sentencia = 1;
+                total_errores++;
+                $$ = NULL;
+            }
         }
     }
     
     | IDENTIFICADOR {
         imprimir_debug($1, "ID");
         $$ = symbol_get($1);
+        if ($$ == NULL) {
+            error_en_sentencia = 1;
+            total_errores++;
+        }
         free($1);
     }
 
@@ -203,10 +240,14 @@ expr:
             $$ = NULL;
             matrix_free($1);
             matrix_free($3);
+            error_en_sentencia = 1;
+            total_errores++;
         } else if (!matrix_validate_add_sub($1, $3)) {
             $$ = NULL;
             matrix_free($1);
             matrix_free($3);
+            error_en_sentencia = 1;
+            total_errores++;
         } else {
             printf("--- Operación: SUMA ---\n");
             $$ = matrix_add($1, $3);
@@ -225,10 +266,12 @@ expr:
             $$ = NULL;
             matrix_free($1);
             matrix_free($3);
+            error_en_sentencia = 1; total_errores++;
         } else if (!matrix_validate_add_sub($1, $3)) {
             $$ = NULL;
             matrix_free($1);
             matrix_free($3);
+            error_en_sentencia = 1; total_errores++;
         } else {
             printf("--- Operación: RESTA ---\n");
             $$ = matrix_sub($1, $3);
@@ -247,10 +290,12 @@ expr:
             $$ = NULL;
             matrix_free($1);
             matrix_free($3);
+            error_en_sentencia = 1; total_errores++;
         } else if (!matrix_validate_mul($1, $3)) {
             $$ = NULL;
             matrix_free($1);
             matrix_free($3);
+            error_en_sentencia = 1; total_errores++;
         } else {
             printf("--- Operación: MULTIPLICACIÓN ---\n");
             $$ = matrix_mul($1, $3);
@@ -268,15 +313,19 @@ expr:
         
         if ($3 == NULL) {
             $$ = NULL;
+            error_en_sentencia = 1; total_errores++;
         } else if (!matrix_validate_square($3)) {
             $$ = NULL;
             matrix_free($3);
+            error_en_sentencia = 1; total_errores++;
         } else {
             printf("--- Función: DETERMINANTE ---\n");
             double det = matrix_det($3);
             $$ = matrix_create(1, 1);
             if ($$ != NULL) {
                 $$->datos[0][0] = det;
+            } else {
+                error_en_sentencia = 1; total_errores++;
             }
             matrix_free($3);
         }
@@ -292,12 +341,17 @@ expr:
         
         if ($3 == NULL) {
             $$ = NULL;
+            error_en_sentencia = 1; total_errores++;
         } else if (!matrix_validate_square($3)) {
             $$ = NULL;
             matrix_free($3);
+            error_en_sentencia = 1; total_errores++;
         } else {
             printf("--- Función: INVERSA ---\n");
             $$ = matrix_inv($3);
+            if ($$ == NULL) {
+                error_en_sentencia = 1; total_errores++;
+            }
             matrix_free($3);
         }
         
@@ -312,9 +366,13 @@ expr:
         
         if ($3 == NULL) {
             $$ = NULL;
+            error_en_sentencia = 1; total_errores++;
         } else {
             printf("--- Función: TRANSPUESTA ---\n");
             $$ = matrix_trans($3);
+            if ($$ == NULL) {
+                error_en_sentencia = 1; total_errores++;
+            }
             matrix_free($3);
         }
         
@@ -332,11 +390,19 @@ expr:
 /* Notación plana: [elem, elem; elem, elem] */
 matriz_plana:
     CORCHETE_IZQ lista_filas CORCHETE_DER {
-        imprimir_debug("[", "CORCHETE_IZQ");
-        profundidad++;
-        $$ = $2;
-        profundidad--;
-        imprimir_debug("]", "CORCHETE_DER");
+        if (error_en_sentencia) {
+            $$ = NULL;
+        } else {
+            imprimir_debug("[", "CORCHETE_IZQ");
+            profundidad++;
+            $$ = $2;
+            profundidad--;
+            imprimir_debug("]", "CORCHETE_DER");
+        }
+    }
+    | CORCHETE_IZQ error {
+        error_en_sentencia = 1; total_errores++;
+        $$ = NULL;
     }
     ;
 
@@ -347,6 +413,15 @@ lista_filas:
     | lista_filas PUNTO_COMA fila {
         imprimir_debug(";", "PUNTO_COMA_FILA");
         if ($1 == NULL || $3 == NULL) {
+            $$ = NULL;
+            matrix_free($1);
+            matrix_free($3);
+        } else if ($1->columnas != $3->columnas) {
+            /* Validación estricta de columnas para asegurar estructura rectangular */
+            fprintf(stderr, "Error: Inconsistencia en el número de columnas por fila (%d vs %d)\n",
+                    $1->columnas, $3->columnas);
+            error_en_sentencia = 1;
+            total_errores++;
             $$ = NULL;
             matrix_free($1);
             matrix_free($3);
@@ -391,6 +466,8 @@ lista_elementos:
         $$ = matrix_create(1, 1);
         if ($$ != NULL) {
             $$->datos[0][0] = $1;
+        } else {
+            error_en_sentencia = 1; total_errores++;
         }
     }
     | lista_elementos COMA NUMERO {
@@ -401,11 +478,13 @@ lista_elementos:
         
         if ($1 == NULL) {
             $$ = NULL;
+            error_en_sentencia = 1; total_errores++;
         } else {
             Matrix* temp = matrix_create(1, $1->columnas + 1);
             if (temp == NULL) {
                 $$ = NULL;
                 matrix_free($1);
+                error_en_sentencia = 1; total_errores++;
             } else {
                 for (int j = 0; j < $1->columnas; j++) {
                     temp->datos[0][j] = $1->datos[0][j];
@@ -441,9 +520,11 @@ lista_expresiones:
             matrix_free($1);
             matrix_free($3);
         } else if ($1->columnas != $3->columnas) {
-            fprintf(stderr, "Error semántico en línea %d: Las filas de la matriz "
-                    "anidada tienen diferentes anchos (%d vs %d)\n",
-                    yylineno, $1->columnas, $3->columnas);
+            /* Validación estricta de columnas para asegurar estructura rectangular */
+            fprintf(stderr, "Error: Inconsistencia en el número de columnas por fila (%d vs %d)\n",
+                    $1->columnas, $3->columnas);
+            error_en_sentencia = 1;
+            total_errores++;
             $$ = NULL;
             matrix_free($1);
             matrix_free($3);
@@ -864,12 +945,26 @@ void symbol_free_all() {
 }
 
 
+/* Función llamada por Bison al encontrar un error sintáctico */
 void yyerror(const char* mensaje) {
-    fprintf(stderr, "Error sintáctico en línea %d: %s\n", yylineno, mensaje);
+    /* 
+     * Solo reportamos el error si no hay un error previo en la misma sentencia,
+     * y si no hemos reportado ya un error en esta misma línea física.
+     * Esto evita la cascada de mensajes "syntax error".
+     */
+    if (!error_en_sentencia && ultima_linea_error != yylineno) {
+        fprintf(stderr, "Error sintáctico en línea %d: %s\n", yylineno, mensaje);
+        ultima_linea_error = yylineno;
+    }
+    /* Marcamos la sentencia actual con error para bloquear la evaluación */
+    error_en_sentencia = 1; 
+    /* Incrementamos el contador global para el reporte final */
+    total_errores++;
 }
 
+/* Modificación de la función principal para asegurar limpieza manual del buffer si es necesario */
 int main(int argc, char** argv) {
-    // Procesar argumentos para activar el modo debug
+    /* Procesar argumentos para activar el modo debug */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
             modo_debug = 1;
@@ -893,10 +988,10 @@ int main(int argc, char** argv) {
     
     symbol_free_all();
     
-    if (resultado == 0) {
+    if (total_errores == 0) {
         printf("\n=== Procesamiento completado exitosamente ===\n");
     } else {
-        printf("\n=== El procesamiento terminó con errores ===\n");
+        printf("\n=== Procesamiento finalizado con errores ===\n");
     }
     
     return resultado;

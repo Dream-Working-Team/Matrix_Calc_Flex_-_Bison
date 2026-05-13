@@ -3,6 +3,12 @@
  * =============================================================================
  * ANALIZADOR LÉXICO PARA CALCULADORA DE MATRICES
  * =============================================================================
+ * Responsabilidades del lexer:
+ *   1. Tokenizar la entrada según las definiciones regulares.
+ *   2. Ante un carácter no reconocido: reportar error, marcar la sentencia
+ *      actual como inválida (error_en_sentencia) e incrementar el contador
+ *      global (total_errores). NO retornar token, solo consumir el carácter
+ *      para que Bison no genere errores sintácticos en cascada.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -20,6 +26,14 @@ typedef struct {
 #endif
 
 #include "matcalc.tab.h"
+
+/*
+ * Variables externas definidas en Bison (.y):
+ *   - error_en_sentencia: flag que bloquea la evaluación de la sentencia actual.
+ *   - total_errores: contador acumulativo de errores en toda la ejecución.
+ */
+extern int error_en_sentencia;
+extern int total_errores;
 
 int yylex(void);
 %}
@@ -89,9 +103,19 @@ PARENT_DER      \)
     }
 }
 
+    /*
+     * Regla catch-all para caracteres no reconocidos:
+     *   - Reporta el error léxico con línea y carácter.
+     *   - Marca error_en_sentencia = 1 para bloquear evaluación.
+     *   - Incrementa total_errores para el reporte final.
+     *   - NO retorna token: el carácter se consume silenciosamente,
+     *     evitando que Bison genere un "syntax error" adicional.
+     */
 .               {
     fprintf(stderr, "Error léxico en línea %d: Carácter '%c' no reconocido\n", 
             yylineno, yytext[0]);
+    error_en_sentencia = 1;
+    total_errores++;
 }
 
 %%
