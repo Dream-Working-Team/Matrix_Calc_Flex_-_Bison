@@ -62,6 +62,13 @@ int modo_debug = 0;
 int ultima_linea_error = -1;
 
 /*
+ * silenciar_traza: Flag global que se activa durante la recuperación en modo pánico.
+ *   Sirve para suprimir la impresión de nodos residuales y repetitivos 
+ *   en el árbol de sintaxis, garantizando una salida de debug limpia.
+ */
+int silenciar_traza = 0;
+
+/*
  * error_en_sentencia: Flag de alcance POR SENTENCIA.
  *   Se activa (=1) cuando ocurre un error léxico, sintáctico o semántico
  *   durante el procesamiento de la sentencia actual.
@@ -82,10 +89,14 @@ int profundidad = 0;
 
 /**
  * Función auxiliar para imprimir el árbol de sintaxis de forma jerárquica.
- * Solo imprime si modo_debug está activo.
+ * Solo imprime si modo_debug está activo y silenciar_traza es 0.
+ * 
+ * NOTA: Si silenciar_traza == 1, aborta inmediatamente. Esto oculta
+ * de forma segura la impresión de nodos huérfanos que ocurre mientras
+ * Bison hace unroll de la pila (stack unrolling) en el modo pánico.
  */
 void imprimir_debug(const char* texto_token, const char* tipo_token) {
-    if (!modo_debug) return;
+    if (!modo_debug || silenciar_traza) return;
     for (int i = 0; i < profundidad; i++) {
         printf("  ");
     }
@@ -109,6 +120,8 @@ struct Matrix {
 /* -------------------------------------------------------------
  * DECLARACIONES DE BISON
  * ------------------------------------------------------------- */
+%define parse.error verbose
+
 %union {
     double numero;
     Matrix* matriz;
@@ -186,11 +199,23 @@ inst_completa:
          * Recuperación en modo pánico: Bison descarta tokens hasta encontrar
          * el PUNTO_COMA de sincronización. yyerrok limpia el estado interno
          * de error de Bison para que no siga reportando "syntax error".
-         * Reiniciamos error_en_sentencia para procesar la siguiente línea.
          */
+         
+        /* a) Rehabilitamos temporalmente la traza si debug está activo para
+         * imprimir el nodo de poda consolidada, reflejando el truncamiento */
+        if (modo_debug) {
+            silenciar_traza = 0;
+            imprimir_debug("[RAMA TRUNCADA POR ERROR SINTÁCTICO]", NULL);
+            imprimir_debug(";", "PUNTO_COMA_SINCRONIZADO");
+        }
+        
+        /* b) Reiniciamos el estado de error de Bison */
         yyerrok;
+        
+        /* c) Reiniciamos ambos flags a 0 para que la siguiente línea 
+         * se evalúe y rastree con normalidad. */
         error_en_sentencia = 0;
-        imprimir_debug("ERROR", "RECUPERACION_PUNTO_COMA");
+        silenciar_traza = 0;
     }
     ;
 
@@ -947,6 +972,13 @@ void symbol_free_all() {
 
 /* Función llamada por Bison al encontrar un error sintáctico */
 void yyerror(const char* mensaje) {
+    /* 
+     * Activamos el flag silenciador inmediatamente. Esto suprimirá 
+     * toda la impresión de nodos residuales de la traza de debug 
+     * mientras Bison retrocede en el stack buscando un punto de sincronización.
+     */
+    silenciar_traza = 1;
+
     /* 
      * Solo reportamos el error si no hay un error previo en la misma sentencia,
      * y si no hemos reportado ya un error en esta misma línea física.
