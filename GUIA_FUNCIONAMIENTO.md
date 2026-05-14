@@ -50,6 +50,44 @@ El lexer no solo reconoce texto, sino que envía valores a Bison a través de la
 }
 ```
 
+## 2. Definición y Detección de Tokens y Reglas
+
+El funcionamiento del traductor se basa en la interacción entre el **Analizador Léxico (Lexer)** y el **Analizador Sintáctico (Parser)** mediante la definición de patrones y estructuras jerárquicas.
+
+### 2.1. Definición de Tokens (Flex)
+En `matcalc.l`, los tokens se definen mediante **Expresiones Regulares**. Cuando Flex encuentra una cadena de texto que coincide con un patrón, ejecuta una acción (bloque `{}`) y retorna un identificador entero que Bison reconoce.
+
+*   **Patrones**: Se definen en la sección de declaraciones (ej. `NUMERO`, `MAS`).
+*   **Acciones**: Es el código C que se ejecuta. Pueden simplemente retornar el token o procesar datos adicionales.
+
+```c
+/* Ejemplo de detección de tokens en matcalc.l */
+{MAS}          { return MAS; }           // Detecta '+' y avisa al parser
+{NUMERO}       { 
+    yylval.numero = atof(yytext);         // Extrae el valor numérico
+    return NUMERO;                        // Retorna el tipo de token
+}
+```
+
+### 2.2. Definición de Reglas Gramaticales (Bison)
+En `matcalc.y`, las reglas se definen mediante **Gramáticas Libres de Contexto** en formato BNF (Backus-Naur Form). Estas reglas dictan cómo se combinan los tokens para formar estructuras complejas.
+
+```bison
+/* Ejemplo de regla sintáctica en matcalc.y */
+expr:
+    expr MAS expr { /* Acción Semántica */ }
+    | NUMERO      { /* Acción Semántica */ }
+    ;
+```
+
+### 2.3. ¿Cómo se detectan y comunican?
+1.  **Llamada**: Bison llama constantemente a la función `yylex()` de Flex pidiendo el "siguiente token".
+2.  **Escaneo**: Flex recorre el archivo de entrada. Si un patrón coincide con los caracteres actuales (`yytext`), Flex identifica el token.
+3.  **Transferencia**: 
+    *   **Tipo**: Retorna el nombre del token (ej. `NUMERO`).
+    *   **Valor**: Si el token tiene un valor asociado (como un número o el nombre de una variable), lo deposita en la variable global `yylval`.
+4.  **Reducción**: Bison recibe el token, lo coloca en su pila interna y busca una regla que coincida con la secuencia de tokens recibida para "reducirlos" a un símbolo de mayor jerarquía (ej. convertir `NUMERO MAS NUMERO` en una `expr`).
+
 ---
 
 ## 3. Análisis Sintáctico (Bison - `matcalc.y`)
