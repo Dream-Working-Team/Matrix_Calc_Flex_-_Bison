@@ -113,6 +113,14 @@ Se soportan dos tipos de entrada:
 1. **Plana**: `[1, 2; 3, 4]` (Separado por `;` para filas y `,` para columnas).
 2. **Anidada**: `[[1, 2], [3, 4]]` (Filas definidas como sub-listas).
 
+### 3.1. Dualidad del Punto y Coma (`;`)
+Una característica fundamental es cómo el `;` cambia su función según el contexto:
+
+*   **Contexto de Matriz (Dentro de `[]`)**: Funciona como un **separador de filas**. El lexer detecta el token `PUNTO_COMA` y la gramática lo usa en la regla `lista_filas` para saltar a una nueva línea de datos.
+    *   *Ejemplo*: `[1, 2; 3, 4]` -> El `;` indica que terminamos la primera fila y empezamos la segunda.
+*   **Contexto de Sentencia (Fuera de `[]`)**: Funciona como un **delimitador de fin de instrucción**. Indica al intérprete que debe procesar toda la operación acumulada.
+    *   *Ejemplo*: `A = [1; 2] + [3; 4];` -> El último `;` gatilla la regla `inst_completa`, imprimiendo el resultado final.
+
 ### 4.1. Verificación de Integridad de la Matriz
 Antes de realizar cualquier cálculo, la calculadora asegura que la matriz esté **bien formada** (que sea rectangular). Esto se corrobora comparando dinámicamente el número de columnas de cada fila nueva con el de la primera fila procesada.
 
